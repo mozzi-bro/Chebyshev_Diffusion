@@ -31,24 +31,43 @@ We use the [ImageCAS](https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Datase
 
 ### Centerline Extraction (Pre-step)
 
-ImageCAS provides `.nii.gz` CTA volumes and binary segmentation masks. You must first extract per-tree **centerlines as `.vtp` files** before running our preprocessing scripts.
+ImageCAS provides per-case CTA volumes and binary segmentation masks. Each case
+contains both LCA and RCA together; split each case by laterality into the
+appropriate folder. You must then extract per-tree centerlines as `.vtp` files
+using the following procedure.
 
-**Recommended workflow** — [3D Slicer](https://www.slicer.org) with the [SlicerVMTK extension](https://github.com/vmtk/SlicerExtension-VMTK):
-1. Load the ImageCAS segmentation mask
-2. Use the *Extract Centerline* module to compute centerlines and per-point radius
-3. Export as `.vtp`
+**Workflow** — [3D Slicer](https://www.slicer.org) with the
+[SlicerVMTK extension](https://github.com/vmtk/SlicerExtension-VMTK):
 
-**Required output schema** (read by `scripts/preprocess_*.py`):
-- `Points`: 3D centerline coordinates (mm)
-- `Lines`: polyline connectivity defining vessel segments
-- `PointData["Radius"]`: per-point radius values (**required**)
-- `PointData["label"]`: integer branch labels (optional, for bifurcation evaluation)
+1. **Load the binary segmentation mask** (`.nii.gz`) into Slicer.
+2. **Run "Extract Centerline"** (from the SlicerVMTK extension):
+   - Input: the segmentation from step 1
+   - Place seed points at the vessel root and distal terminals
+   - The module computes centerlines with a per-point radius array
+     (`MaximumInscribedSphereRadius`)
+3. **Export the centerline model as `.vtp`**.
+4. The exported result is split per branch (one curve per branch).
+   **Consolidate the branches into a single PolyData per case**:
+   - All branches share a single `Points` array (coordinates in mm)
+   - Each branch becomes one polyline cell in the `Lines` array
+   - The per-branch radius values are concatenated into a single
+     `PointData["Radius"]` array (renamed from `MaximumInscribedSphereRadius`
+     if needed)
+
+**Required output schema** (consumed by `scripts/preprocess_*.py`):
+- `Points`: 3D centerline coordinates in mm
+- `Lines`: polyline cells (one per branch)
+- `PointData["Radius"]`: per-point inscribed-sphere radius (**required**)
 
 Place the resulting files under:
 ```
-data/lca/raw_vtp/     # Left coronary artery
-data/rca/raw_vtp/     # Right coronary artery
+data/lca/raw_vtp/     # Left coronary artery cases
+data/rca/raw_vtp/     # Right coronary artery cases
 ```
+
+> **Note**: We do not redistribute the preprocessed `.vtp` files because
+> ImageCAS is distributed without an explicit redistribution license.
+> Please obtain the dataset directly and apply the procedure above.
 
 ## Usage ⚙️
 
