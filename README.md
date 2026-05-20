@@ -27,8 +27,24 @@ PyTorch must be installed with CUDA matching your GPU. See [pytorch.org](https:/
 
 ## Dataset 📊
 
-We use the [ImageCAS](https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT) coronary artery dataset. Place `.vtp` files (containing `Radius` point data) under:
+We use the [ImageCAS](https://github.com/XiaoweiXu/ImageCAS-A-Large-Scale-Dataset-and-Benchmark-for-Coronary-Artery-Segmentation-based-on-CT) coronary artery dataset.
 
+### Centerline Extraction (Pre-step)
+
+ImageCAS provides `.nii.gz` CTA volumes and binary segmentation masks. You must first extract per-tree **centerlines as `.vtp` files** before running our preprocessing scripts.
+
+**Recommended workflow** — [3D Slicer](https://www.slicer.org) with the [SlicerVMTK extension](https://github.com/vmtk/SlicerExtension-VMTK):
+1. Load the ImageCAS segmentation mask
+2. Use the *Extract Centerline* module to compute centerlines and per-point radius
+3. Export as `.vtp`
+
+**Required output schema** (read by `scripts/preprocess_*.py`):
+- `Points`: 3D centerline coordinates (mm)
+- `Lines`: polyline connectivity defining vessel segments
+- `PointData["Radius"]`: per-point radius values (**required**)
+- `PointData["label"]`: integer branch labels (optional, for bifurcation evaluation)
+
+Place the resulting files under:
 ```
 data/lca/raw_vtp/     # Left coronary artery
 data/rca/raw_vtp/     # Right coronary artery
