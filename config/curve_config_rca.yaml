@@ -1,0 +1,237 @@
+# =============================================================================
+# Stage-2B Configuration: Chebyshev-Polar Diffusion (RCA)
+# =============================================================================
+# Phase 1: MagnitudeDiffusion - r[0:48] generation
+# Phase 2: ThetaDiffusion - theta[0] generation
+# Phase 3: RadiusDiffusion - coeffs_r[0:6] generation
+#
+# Required JSON files:
+# - gt_statistics.json: L-bin config, Stratified config, theta[0] weights, loss_weights
+# - temperature_config.json: Temperature calibration (for inference)
+#
+# JSON file generation:
+#   python scripts/preprocess_curve.py --dataset <name> --compute-statistics
+#   python calibrate_temperature.py --phase1-ckpt ... --output ...
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Dataset (any name can be used)
+# Must match the --dataset argument used during preprocessing
+# e.g.: lca, rca, vessap, cow, my_custom_dataset, etc.
+# -----------------------------------------------------------------------------
+dataset: "rca"
+
+# -----------------------------------------------------------------------------
+# Paths (${dataset} variable is automatically substituted)
+# -----------------------------------------------------------------------------
+paths:
+  root_dir: "."
+
+  # Data paths (auto-configured)
+  data_dir: "${paths.root_dir}/data/${dataset}"
+  npz_dir: "${paths.data_dir}/recipe_npz"
+  statistics_dir: "${paths.data_dir}/statistics"
+
+  # GT statistics and Temperature config paths (required)
+  gt_statistics: "${paths.statistics_dir}/gt_statistics.json"
+  temperature_config: "${paths.statistics_dir}/temperature_config.json"
+
+  # Split file paths
+  train_split: "${paths.npz_dir}/train_filename.csv"
+  val_split: "${paths.npz_dir}/val_filename.csv"
+
+  # Output paths
+  output_dir: "${paths.root_dir}/outputs/${dataset}/stage2b"
+  checkpoint_dir: "${paths.output_dir}/checkpoints"
+
+# -----------------------------------------------------------------------------
+# Data
+# -----------------------------------------------------------------------------
+data:
+  chebyshev_k: 48
+  train_ratio: 0.81
+
+# -----------------------------------------------------------------------------
+# Phase 1: MagnitudeDiffusion (r[0:K] Generation)
+# -----------------------------------------------------------------------------
+magnitude_diffusion:
+  # Dimensions
+  input_dim: 48         # r[0:48]
+  cond_dim: null          # Auto-detected from dataset (5 + 2*hints_per_segment)
+
+  # Network architecture
+  hidden_dims: [256, 512, 512, 256]
+  time_emb_dim: 64
+  dropout: 0.1
+
+  # Noise schedule
+  T: 500
+  beta_start: 0.0001
+  beta_end: 0.02
+
+  # Condition variable normalization
+  normalize_condition: true
+
+  # Training settings
+  epochs: 200
+  batch_size: 128       # 128 recommended for stratified sampling
+  lr: 0.001
+  weight_decay: 0.0001
+  lr_scheduler: "cosine"
+  warmup_epochs: 0
+
+  # Early stopping
+  early_stopping: true
+  patience: 30
+
+  # Multi-sample settings (for validation)
+  n_samples_eval: 30
+
+  # Target metrics
+  target_wasserstein: 0.085
+  target_var_ratio: 0.94
+  target_coverage_95: 0.89
+
+  # FiLM Conditioning
+  use_film: true         # FiLM: inject condition info via gamma*h + beta at each layer
+
+  # Stratified Batch Sampling
+  stratified_sampling: true
+  # stratified_ratios are loaded from gt_statistics.json (required)
+  stratified_ratios: null
+
+  # Loss function
+  loss_type: huber     # 'mse' or 'huber'
+  huber_delta: 1.0     # Huber loss delta
+
+# -----------------------------------------------------------------------------
+# Phase 2: ThetaDiffusion (theta[0] Generation)
+# -----------------------------------------------------------------------------
+theta_diffusion:
+  # Representation
+  representation: "cos_sin"
+  input_dim: 2
+  cond_dim: null          # Auto-detected from dataset (5 + 2*hints_per_segment)
+
+  # Network architecture
+  hidden_dims: [128, 256, 256, 128]
+  time_emb_dim: 64
+  dropout: 0.1
+
+  # Noise schedule
+  T: 500
+  beta_start: 0.0001
+  beta_end: 0.02
+
+  # Training
+  epochs: 200
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  lr_scheduler: "cosine"
+  warmup_epochs: 0
+
+  # Early stopping
+  early_stopping: false
+  patience: 20
+
+# -----------------------------------------------------------------------------
+# Phase 3: RadiusDiffusion (coeffs_r[0:6] Generation)
+# -----------------------------------------------------------------------------
+radius_diffusion:
+  # Dimensions
+  output_dim: 6           # coeffs_r[0:6]
+  cond_dim: null          # Auto-detected from dataset (5 + 2*hints_per_segment)
+
+  # Network architecture
+  hidden_dims: [128, 256, 256, 128]
+  time_emb_dim: 64
+  dropout: 0.1
+
+  # Noise schedule
+  T: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+
+  # FiLM Conditioning
+  use_film: true
+
+  # Weighted Loss (inverse-variance weighting)
+  use_weighted_loss: true
+  # loss_weights are loaded from gt_statistics.json (required)
+  # Key: "coeffs_r_inverse_variance_weights"
+  loss_weights: null
+
+  # Condition variable normalization
+  normalize_condition: true
+
+  # Training settings
+  epochs: 200
+  batch_size: 128
+  lr: 0.001
+  weight_decay: 0.0001
+  lr_scheduler: "cosine"
+
+  # Early stopping
+  early_stopping: true
+  patience: 30
+
+  # Multi-sample settings (for validation)
+  n_samples_eval: 30
+
+  # Stratified Batch Sampling
+  stratified_sampling: true
+  # stratified_ratios are loaded from gt_statistics.json (required)
+  stratified_ratios: null
+
+# -----------------------------------------------------------------------------
+# Training
+# -----------------------------------------------------------------------------
+training:
+  seed: 42
+  num_workers: 4
+  pin_memory: true
+
+  # Logging
+  log_every_n_steps: 10
+  val_every_n_epochs: 10
+  save_every_n_epochs: 50
+
+  # Device
+  device: "cuda"
+  precision: 32
+
+# -----------------------------------------------------------------------------
+# Evaluation
+# -----------------------------------------------------------------------------
+evaluation:
+  phase1_primary_metric: "wasserstein_distance"
+  phase1_metrics:
+    - "wasserstein_distance"
+    - "variance_ratio"
+    - "coverage_95"
+    - "mean_error"
+    - "std_error"
+
+  phase2_primary_metric: "kappa_error"
+  phase2_metrics:
+    - "kappa_error"
+    - "mu_error"
+
+  # Phase 3 metrics
+  phase3_primary_metric: "val_loss"
+  phase3_metrics:
+    - "val_loss"
+    - "per_k_correlation"
+    - "mean_error"
+
+  n_samples_per_bin: 2000
+  n_curves_for_cd: 300
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+logging:
+  use_wandb: false
+  project_name: "vesselgen-curve"
+  experiment_name: "stage2b-curve-diffusion"
