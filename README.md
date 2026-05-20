@@ -56,7 +56,7 @@ using the following procedure.
 
 **Required output schema** (consumed by `scripts/preprocess_*.py`):
 - `Points`: 3D centerline coordinates in mm
-- `Lines`: polyline cells (one per branch)
+- `Lines`: polyline cells defining the centerline connectivity
 - `PointData["Radius"]`: per-point inscribed-sphere radius (**required**)
 
 Place the resulting files under:
