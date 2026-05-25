@@ -148,6 +148,11 @@ class AnatomicalMetrics:
     tapering_ratio_mean: float = 0.0
     tapering_ratio_wasserstein: float = 0.0
 
+    # [per-edge tapering audit] radius decrease RATE per edge = |slope| of radius vs arc-length
+    tapering_slope_mean: float = 0.0
+    tapering_slope_wasserstein: float = 0.0
+    tapering_slope_n_edges: int = 0
+
 
 @dataclass
 class TopologicalMetrics:
@@ -772,6 +777,36 @@ def compute_segment_length(points: np.ndarray) -> float:
     return float(np.sum(norm(np.diff(points, axis=0), axis=1)))
 
 
+def compute_edge_tapering_slopes(points: np.ndarray, edges: List[Tuple[int, int]],
+                                 radius: np.ndarray) -> List[float]:
+    """[per-edge tapering audit] Radius decrease RATE along each edge.
+
+    For every edge (segment between special nodes, i.e. an anatomical branch),
+    fit radius r(s) against cumulative arc-length s by least squares and take the
+    magnitude of the slope |dr/ds|. One value per edge; pooled across vessels for a
+    distributional (Wasserstein) comparison, matching the other curve-level metrics.
+
+    Scale note: r and s are both divided by the same per-tree max_extent during
+    normalization, so the slope (radius per unit length) is scale-invariant.
+    """
+    slopes = []
+    for seg_pts, seg_idx in extract_segments_with_indices(points, edges):
+        if len(seg_pts) < 2:
+            continue
+        idx = np.asarray(seg_idx)
+        if idx.size != len(seg_pts) or idx.max() >= len(radius):
+            continue
+        r = np.asarray(radius, dtype=np.float64)[idx]
+        d = norm(np.diff(seg_pts, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(d)])
+        if s[-1] < EPS or np.var(s) < EPS:
+            continue
+        # least-squares slope of r on s
+        slope = np.cov(s, r, bias=True)[0, 1] / np.var(s)
+        slopes.append(abs(float(slope)))
+    return slopes
+
+
 def chamfer_distance_gpu_batch(pcs1: torch.Tensor, pcs2: torch.Tensor,
                                 batch_size: int = CD_BATCH_SIZE) -> torch.Tensor:
     N1, P1, _ = pcs1.shape
@@ -877,6 +912,7 @@ def compute_anatomical_metrics(vessels: List[Dict], gt_vessels: Optional[List[Di
     all_curvatures = []
     all_torsions = []
     tapering_ratios = []
+    tapering_slopes = []
     n_bifurcations_total = 0
     
     for v in vessels:
@@ -908,7 +944,9 @@ def compute_anatomical_metrics(vessels: List[Dict], gt_vessels: Optional[List[Di
                     r_distal = ep_radii[-1][1]
                     if r_proximal > EPS:
                         tapering_ratios.append(r_distal / r_proximal)
-        
+
+        tapering_slopes.extend(compute_edge_tapering_slopes(pts_orig, v['edges'], rad))
+
         adj = build_adjacency(v['edges'], len(pts_orig))
         bifurcations = find_bifurcations(adj)
         n_bifurcations_total += len(bifurcations)
@@ -940,6 +978,7 @@ def compute_anatomical_metrics(vessels: List[Dict], gt_vessels: Optional[List[Di
     
     gt_tortuosities, gt_curvatures, gt_torsions = [], [], []
     gt_lengths, gt_angles, gt_tapering = [], [], []
+    gt_tapering_slopes = []
     
     if gt_vessels:
         for v in gt_vessels:
@@ -970,7 +1009,9 @@ def compute_anatomical_metrics(vessels: List[Dict], gt_vessels: Optional[List[Di
                         r_dist = ep_radii[-1][1]
                         if r_prox > EPS:
                             gt_tapering.append(r_dist / r_prox)
-            
+
+            gt_tapering_slopes.extend(compute_edge_tapering_slopes(pts_orig, v['edges'], rad))
+
             adj = build_adjacency(v['edges'], len(pts_orig))
             for bif in find_bifurcations(adj):
                 neighbors = adj.get(bif, [])
@@ -1017,7 +1058,10 @@ def compute_anatomical_metrics(vessels: List[Dict], gt_vessels: Optional[List[Di
         torsion_mean=float(np.mean(all_torsions)) if all_torsions else 0.0,
         torsion_wasserstein=safe_wasserstein(all_torsions, gt_torsions),
         tapering_ratio_mean=float(np.mean(tapering_ratios)) if tapering_ratios else 0.0,
-        tapering_ratio_wasserstein=safe_wasserstein(tapering_ratios, gt_tapering)
+        tapering_ratio_wasserstein=safe_wasserstein(tapering_ratios, gt_tapering),
+        tapering_slope_mean=float(np.mean(tapering_slopes)) if tapering_slopes else 0.0,
+        tapering_slope_wasserstein=safe_wasserstein(tapering_slopes, gt_tapering_slopes),
+        tapering_slope_n_edges=len(tapering_slopes)
     )
 
 
